@@ -1,0 +1,937 @@
+"""
+CODE QUEST - learn the basics of programming by teaching a robot to think.
+
+You build a small program out of code blocks, press RUN, and watch the robot
+execute it step by step. Seven levels teach:
+
+    1-2  Sequences      (instructions run in order)
+    3-4  Loops          (repeat instead of copy/paste)
+    5    Conditionals   (if / else decisions)
+    6    Debugging      (find and fix a bug)
+    7    Everything together
+
+Requirements:   pip install pygame
+Run:            python code_quest.py
+
+Controls
+    Mouse           click blocks to add them, click a row to select it,
+                    x deletes a row, + / - change a loop count (Shift = +/-5)
+    1-7             add the Nth block from the palette
+    Enter / Space   run program (or go to next level after winning)
+    R               reset robot        Backspace  delete selected row
+    Up / Down       move selection     Esc        quit
+"""
+
+import math
+import random
+import sys
+
+import pygame
+
+WIDTH, HEIGHT = 1100, 700
+FPS = 60
+MAX_STEPS = 1500
+
+# ----------------------------------------------------------------- colours
+BG = (18, 22, 36)
+PANEL = (28, 34, 54)
+PANEL_LIGHT = (40, 48, 76)
+FLOOR_C = (44, 54, 84)
+WALL_C = (22, 26, 42)
+WALL_EDGE = (60, 70, 104)
+TEXT = (232, 236, 248)
+MUTED = (140, 152, 184)
+WHITE = (255, 255, 255)
+ACCENT = (86, 204, 242)
+GREEN = (76, 201, 130)
+RED = (240, 98, 98)
+YELLOW = (255, 206, 84)
+C_MOVE = (66, 133, 244)
+C_LOOP = (236, 146, 46)
+C_LOGIC = (166, 112, 232)
+C_GREY = (110, 120, 146)
+
+DIRS = [(1, 0), (0, 1), (-1, 0), (0, -1)]  # east, south, west, north
+
+# ------------------------------------------------------------------ layout
+GRID_RECT = pygame.Rect(30, 92, 600, 408)
+MSG_RECT = pygame.Rect(30, 506, 600, 32)
+LESSON_RECT = pygame.Rect(30, 544, 600, 146)
+PAL_X, PAL_W = 655, 415
+PAL_RECT = pygame.Rect(PAL_X, 92, PAL_W, 214)
+PROG_PANEL = pygame.Rect(PAL_X, 312, PAL_W, 296)
+PROG_RECT = pygame.Rect(PAL_X, 344, PAL_W, 254)
+ROW_H = 25
+
+# ------------------------------------------------------------------ blocks
+BLOCKS = {
+    "FWD": ("move_forward()", C_MOVE),
+    "LEFT": ("turn_left()", C_MOVE),
+    "RIGHT": ("turn_right()", C_MOVE),
+    "REPEAT": ("repeat N times:", C_LOOP),
+    "IF": ("if path_clear:", C_LOGIC),
+    "ELSE": ("else:", C_LOGIC),
+    "END": ("end", C_GREY),
+}
+
+
+def T(kind, n=2):
+    return {"kind": kind, "n": n}
+
+
+# ------------------------------------------------------------------ levels
+LEVELS = [
+    dict(
+        title="Level 1: Follow the Instructions",
+        concept="SEQUENCES", color=C_MOVE,
+        lesson="A program is a list of instructions that the computer follows one "
+               "at a time, from top to bottom. Click blocks to build your program, "
+               "then press RUN to guide the robot to the flag.",
+        hint="Hint: the flag is 4 steps ahead of the robot.",
+        map=["#####",
+             "S...G",
+             "#####"],
+        allowed=["FWD"], max_blocks=8, par=4, pre=[],
+    ),
+    dict(
+        title="Level 2: Order Matters",
+        concept="SEQUENCES", color=C_MOVE,
+        lesson="The ORDER of instructions matters! turn_right() spins the robot 90 "
+               "degrees clockwise and turn_left() spins it counter-clockwise. Plan "
+               "the route first, then build it.",
+        hint="Tip: click a row in your program to choose where the next block goes.",
+        map=["S..#.",
+             "##.#.",
+             "##..G"],
+        allowed=["FWD", "LEFT", "RIGHT"], max_blocks=12, par=8, pre=[],
+    ),
+    dict(
+        title="Level 3: Say It Once",
+        concept="LOOPS", color=C_LOOP,
+        lesson="Writing the same instruction again and again is boring. A LOOP "
+               "repeats instructions for you. Put blocks between 'repeat' and 'end', "
+               "then use + and - on the repeat row to set the count.",
+        hint="Challenge: reach the flag with 4 blocks or fewer. (Shift+click = 5 at a time)",
+        map=["#########",
+             "S.......G",
+             "#########"],
+        allowed=["FWD", "REPEAT", "END"], max_blocks=4, par=3, pre=[],
+    ),
+    dict(
+        title="Level 4: Patterns",
+        concept="LOOPS", color=C_LOOP,
+        lesson="Loops can repeat a whole PATTERN of instructions, not just one. Look "
+               "at the staircase: which steps repeat over and over? Put that pattern "
+               "inside a single loop.",
+        hint="Challenge: solve it with 6 blocks or fewer.",
+        map=["S.###",
+             "#..##",
+             "##..#",
+             "###..",
+             "####G"],
+        allowed=["FWD", "LEFT", "RIGHT", "REPEAT", "END"], max_blocks=8, par=6, pre=[],
+    ),
+    dict(
+        title="Level 5: Making Decisions",
+        concept="CONDITIONALS", color=C_LOGIC,
+        lesson="Programs can make DECISIONS. 'if path_clear' checks whether the "
+               "square ahead is free. If it is, the first part runs; otherwise the "
+               "'else' part runs. Put a decision inside a loop and the robot can find "
+               "its own way!",
+        hint="Idea: move forward while the path is clear, otherwise turn right. Repeat ~12 times.",
+        map=["S....",
+             "####.",
+             "G...."],
+        allowed=["FWD", "LEFT", "RIGHT", "REPEAT", "IF", "ELSE", "END"],
+        max_blocks=9, par=7, pre=[],
+    ),
+    dict(
+        title="Level 6: Bug Hunt",
+        concept="DEBUGGING", color=RED,
+        lesson="A BUG is a mistake in a program, and debugging means finding and "
+               "fixing it. This program was supposed to reach the flag, but it "
+               "crashes! Run it, watch where it goes wrong, then fix it.",
+        hint="Click a row to select it, press x to delete it, then add the right block.",
+        map=["##..G",
+             "##.##",
+             "S..##"],
+        allowed=["FWD", "LEFT", "RIGHT", "REPEAT", "END"], max_blocks=10, par=8,
+        pre=[T("FWD"), T("FWD"), T("RIGHT"), T("FWD"),
+             T("FWD"), T("LEFT"), T("FWD"), T("FWD")],
+    ),
+    dict(
+        title="Level 7: Master Coder",
+        concept="EVERYTHING", color=GREEN,
+        lesson="Collect every coin AND reach the flag. Use sequences, loops, "
+               "decisions - whatever you like. The fewer blocks you use, the more "
+               "stars you earn.",
+        hint="Par is 7 blocks for three stars.",
+        map=["S.C.C.C",
+             "######.",
+             "G.C.C.C"],
+        allowed=["FWD", "LEFT", "RIGHT", "REPEAT", "IF", "ELSE", "END"],
+        max_blocks=10, par=7, pre=[],
+    ),
+]
+
+
+# ----------------------------------------------------------- program parser
+class ParseError(Exception):
+    pass
+
+
+def parse_program(tokens):
+    nodes, _, _ = _parse_block(tokens, 0, ())
+    return nodes
+
+
+def _parse_block(tokens, i, stop):
+    nodes = []
+    while i < len(tokens):
+        t = tokens[i]
+        k = t["kind"]
+        if k in ("FWD", "LEFT", "RIGHT"):
+            nodes.append((k, i))
+            i += 1
+        elif k == "REPEAT":
+            start = i
+            body, i, ender = _parse_block(tokens, i + 1, ("END",))
+            if ender != "END":
+                raise ParseError("A 'repeat' block is missing its 'end'.")
+            nodes.append(("REPEAT", start, t["n"], body))
+        elif k == "IF":
+            start = i
+            body, i, ender = _parse_block(tokens, i + 1, ("ELSE", "END"))
+            else_body = []
+            if ender == "ELSE":
+                else_body, i, ender = _parse_block(tokens, i, ("END",))
+            if ender != "END":
+                raise ParseError("An 'if' block is missing its 'end'.")
+            nodes.append(("IF", start, body, else_body))
+        else:  # ELSE or END
+            if k in stop:
+                return nodes, i + 1, k
+            if k == "ELSE":
+                raise ParseError("An 'else' must come inside an 'if' block.")
+            raise ParseError("This 'end' doesn't close any repeat or if block.")
+    return nodes, i, None
+
+
+# ----------------------------------------------------------------- helpers
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+
+def smooth(t):
+    return t * t * (3 - 2 * t)
+
+
+def shade(c, d):
+    return tuple(max(0, min(255, v + d)) for v in c)
+
+
+def draw_text(surf, text, font, color, pos, anchor="topleft"):
+    img = font.render(text, True, color)
+    r = img.get_rect(**{anchor: pos})
+    surf.blit(img, r)
+    return r
+
+
+def wrap(text, font, max_w):
+    lines, cur = [], ""
+    for w in text.split():
+        test = (cur + " " + w).strip()
+        if font.size(test)[0] <= max_w:
+            cur = test
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def star_points(cx, cy, ro, ri):
+    pts = []
+    for i in range(10):
+        a = -math.pi / 2 + i * math.pi / 5
+        r = ro if i % 2 == 0 else ri
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+def make_robot_surface(s):
+    surf = pygame.Surface((s, s), pygame.SRCALPHA)
+    body = pygame.Rect(0, 0, s, s)
+    pygame.draw.rect(surf, ACCENT, body, border_radius=s // 4)
+    pygame.draw.rect(surf, shade(ACCENT, -70), body, max(2, s // 14), border_radius=s // 4)
+    tread = max(3, s // 8)
+    pygame.draw.rect(surf, (30, 40, 60), (s * 0.12, 0, s * 0.6, tread), border_radius=3)
+    pygame.draw.rect(surf, (30, 40, 60), (s * 0.12, s - tread, s * 0.6, tread), border_radius=3)
+    face = pygame.Rect(s * 0.42, s * 0.18, s * 0.48, s * 0.64)
+    pygame.draw.rect(surf, (20, 28, 48), face, border_radius=s // 8)
+    for ey in (0.36, 0.64):
+        pygame.draw.circle(surf, WHITE, (s * 0.62, s * ey), max(3, s * 0.09))
+        pygame.draw.circle(surf, (20, 28, 48), (s * 0.65, s * ey), max(2, s * 0.045))
+    pygame.draw.circle(surf, YELLOW, (s * 0.2, s * 0.5), max(3, s * 0.07))
+    return surf
+
+
+class Button:
+    def __init__(self, rect, text, color, tag, font):
+        self.rect = pygame.Rect(rect)
+        self.text, self.color, self.tag, self.font = text, color, tag, font
+
+    def hit(self, pos):
+        return self.rect.collidepoint(pos)
+
+    def draw(self, surf, mouse, enabled=True):
+        col = self.color
+        if not enabled:
+            col = tuple((a + b) // 2 for a, b in zip(col, PANEL))
+        elif self.rect.collidepoint(mouse):
+            col = shade(col, 28)
+        pygame.draw.rect(surf, col, self.rect, border_radius=9)
+        pygame.draw.rect(surf, shade(col, -55), self.rect, 2, border_radius=9)
+        draw_text(surf, self.text, self.font, WHITE if enabled else MUTED,
+                  self.rect.center, "center")
+
+
+# -------------------------------------------------------------------- game
+class Game:
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption("Code Quest - Learn to Code!")
+        self.clock = pygame.time.Clock()
+        sans = "segoeui,helveticaneue,arial,dejavusans,sans"
+        mono = "consolas,menlo,dejavusansmono,couriernew,monospace"
+        self.f_big = pygame.font.SysFont(sans, 76, bold=True)
+        self.f_title = pygame.font.SysFont(sans, 36, bold=True)
+        self.f_h = pygame.font.SysFont(sans, 22, bold=True)
+        self.f_body = pygame.font.SysFont(sans, 17)
+        self.f_small = pygame.font.SysFont(sans, 14)
+        self.f_mono = pygame.font.SysFont(mono, 15, bold=True)
+        self.f_btn = pygame.font.SysFont(sans, 18, bold=True)
+
+        self.mode = "title"           # title | play | end
+        self.unlocked = 1
+        self.stars = {}
+        self.programs = {}
+        self.confetti = []
+        self.speed_opts = [1, 2, 4]
+        self.speed_i = 0
+        self.title_robot = make_robot_surface(150)
+        self.start_btn = Button((425, 540, 250, 58), "START", GREEN, "start", self.f_title)
+        self.again_btn = Button((425, 560, 250, 58), "PLAY AGAIN", GREEN, "again", self.f_btn)
+        self.controls = [
+            Button((PAL_X, 616, 130, 36), "RUN", GREEN, "run", self.f_btn),
+            Button((PAL_X + 138, 616, 90, 36), "Reset", C_GREY, "reset", self.f_btn),
+            Button((PAL_X + 236, 616, 90, 36), "Clear", C_GREY, "clear", self.f_btn),
+            Button((PAL_X + 334, 616, 81, 36), "Speed 1x", C_GREY, "speed", self.f_small),
+        ]
+        self.overlay_btns = []
+        self.load_level(0)
+
+    # ------------------------------------------------------- level setup
+    @property
+    def speed(self):
+        return self.speed_opts[self.speed_i]
+
+    def load_level(self, i):
+        self.level_idx = i
+        self.level = L = LEVELS[i]
+        rows = L["map"]
+        self.gw, self.gh = len(rows[0]), len(rows)
+        self.walls, self.coins_initial = set(), set()
+        self.goal = self.start = None
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                if ch == "#":
+                    self.walls.add((x, y))
+                elif ch == "S":
+                    self.start = (x, y)
+                elif ch == "G":
+                    self.goal = (x, y)
+                elif ch == "C":
+                    self.coins_initial.add((x, y))
+        self.cell = min(GRID_RECT.w // self.gw, GRID_RECT.h // self.gh, 84)
+        self.origin = (GRID_RECT.centerx - self.gw * self.cell / 2,
+                       GRID_RECT.centery - self.gh * self.cell / 2)
+        if i not in self.programs:
+            self.programs[i] = [dict(t) for t in L["pre"]]
+        self.program = self.programs[i]
+        self.sel = -1
+        self.build_palette()
+        self.robot_surf = make_robot_surface(int(self.cell * 0.7))
+        self.reset_robot()
+
+    def build_palette(self):
+        self.palette = []
+        for n, kind in enumerate(self.level["allowed"]):
+            col, row = n % 2, n // 2
+            rect = (PAL_X + 12 + col * 199, 124 + row * 40, 191, 34)
+            label = "%d  %s" % (n + 1, BLOCKS[kind][0])
+            self.palette.append(Button(rect, label, BLOCKS[kind][1], kind, self.f_mono))
+
+    def reset_robot(self):
+        self.pos = list(self.start)
+        self.dir = 0
+        self.vis_from = self.vis_to = tuple(self.pos)
+        self.ang_from = self.ang_to = 0.0
+        self.coins = set(self.coins_initial)
+        self.state = "edit"           # edit | running | fail | success
+        self.gen = None
+        self.active_idx = None
+        self.pending = None
+        self.bump = False
+        self.steps = 0
+        self.timer = 0.0
+        self.dur = 0.2
+        self.message = ("Build a program, then press RUN.", MUTED)
+
+    # -------------------------------------------------------- program edit
+    def after_edit(self):
+        if self.state != "edit":
+            self.reset_robot()
+        else:
+            self.message = ("", MUTED)
+
+    def add_token(self, kind):
+        if self.state == "running":
+            return
+        if len(self.program) >= self.level["max_blocks"]:
+            self.message = ("Your program is full! Remove a block or find a shorter way.", YELLOW)
+            return
+        idx = self.sel + 1 if self.sel >= 0 else len(self.program)
+        self.program.insert(idx, T(kind, 2))
+        self.sel = idx
+        self.after_edit()
+
+    def delete_token(self, idx):
+        if self.state == "running" or not (0 <= idx < len(self.program)):
+            return
+        del self.program[idx]
+        self.sel = min(self.sel, len(self.program) - 1)
+        self.after_edit()
+
+    def compute_rows(self):
+        depths, colors, stack = [], [], []
+        for t in self.program:
+            k = t["kind"]
+            if k in ("REPEAT", "IF"):
+                depths.append(len(stack))
+                colors.append(BLOCKS[k][1])
+                stack.append(k)
+            elif k == "ELSE":
+                depths.append(max(len(stack) - 1, 0))
+                colors.append(C_LOGIC)
+            elif k == "END":
+                col = BLOCKS[stack[-1]][1] if stack else C_GREY
+                if stack:
+                    stack.pop()
+                depths.append(len(stack))
+                colors.append(col)
+            else:
+                depths.append(len(stack))
+                colors.append(C_MOVE)
+        return depths, colors
+
+    def row_rects(self, i, depth):
+        y = PROG_RECT.y + 4 + i * ROW_H
+        indent = depth * 16
+        row = pygame.Rect(PROG_RECT.x + 10 + indent, y, PROG_RECT.w - 20 - indent, ROW_H - 3)
+        dele = pygame.Rect(row.right - 24, row.y + 3, 20, row.h - 6)
+        plus = pygame.Rect(dele.x - 26, row.y + 3, 22, row.h - 6)
+        minus = pygame.Rect(plus.x - 26, row.y + 3, 22, row.h - 6)
+        return row, minus, plus, dele
+
+    # ------------------------------------------------------------ running
+    def is_wall(self, x, y):
+        return (x, y) in self.walls or not (0 <= x < self.gw and 0 <= y < self.gh)
+
+    def path_clear(self):
+        dx, dy = DIRS[self.dir]
+        return not self.is_wall(self.pos[0] + dx, self.pos[1] + dy)
+
+    def exec_nodes(self, nodes):
+        for node in nodes:
+            k = node[0]
+            if k in ("FWD", "LEFT", "RIGHT"):
+                yield (k, node[1], None)
+            elif k == "REPEAT":
+                _, idx, n, body = node
+                for i in range(n):
+                    yield ("LOOP", idx, "repeat: round %d of %d" % (i + 1, n))
+                    yield from self.exec_nodes(body)
+            elif k == "IF":
+                _, idx, body, else_body = node
+                clear = self.path_clear()
+                yield ("CHECK", idx, "if path_clear?  ->  %s" % clear)
+                yield from self.exec_nodes(body if clear else else_body)
+
+    def start_run(self):
+        if self.state == "running":
+            return
+        self.reset_robot()
+        if not self.program:
+            self.message = ("Add some blocks to your program first!", YELLOW)
+            return
+        try:
+            tree = parse_program(self.program)
+        except ParseError as e:
+            self.message = ("Syntax error: %s" % e, RED)
+            return
+        self.gen = self.exec_nodes(tree)
+        self.state = "running"
+        self.timer, self.dur = 0.0, 0.25
+        self.message = ("Running your program...", ACCENT)
+
+    def apply_step(self, kind, idx, extra):
+        self.active_idx = idx
+        self.steps += 1
+        self.timer = 0.0
+        self.vis_from, self.ang_from = self.vis_to, self.ang_to
+        base = {"FWD": 0.36, "LEFT": 0.28, "RIGHT": 0.28, "CHECK": 0.40, "LOOP": 0.22}[kind]
+        self.dur = base / self.speed
+        if kind == "FWD":
+            dx, dy = DIRS[self.dir]
+            nx, ny = self.pos[0] + dx, self.pos[1] + dy
+            if self.is_wall(nx, ny):
+                self.bump = True
+                self.dur = 0.5 / self.speed
+                self.pending = ("fail", "Crash! The robot ran into a wall. Look at the highlighted line.")
+            else:
+                self.pos = [nx, ny]
+                self.vis_to = (nx, ny)
+                if (nx, ny) == self.goal:
+                    self.pending = ("goal", None)
+        elif kind == "LEFT":
+            self.dir = (self.dir - 1) % 4
+            self.ang_to -= 90
+        elif kind == "RIGHT":
+            self.dir = (self.dir + 1) % 4
+            self.ang_to += 90
+        else:
+            self.message = (extra, C_LOGIC if kind == "CHECK" else C_LOOP)
+
+    def finish_step(self):
+        self.vis_from, self.ang_from = self.vis_to, self.ang_to
+        self.bump = False
+        p = tuple(self.pos)
+        if p in self.coins:
+            self.coins.discard(p)
+            self.burst(self.cell_center(p), YELLOW, 14)
+        if self.pending:
+            kind, msg = self.pending
+            self.pending = None
+            if kind == "fail":
+                return self.fail(msg)
+            if kind == "goal":
+                if self.coins:
+                    return self.fail("You reached the flag, but you missed some coins!")
+                return self.win()
+        if self.steps >= MAX_STEPS:
+            return self.fail("Your program ran for too long. Is something repeating forever?")
+        try:
+            kind, idx, extra = next(self.gen)
+        except StopIteration:
+            return self.fail("The program ended, but the robot isn't on the flag yet.")
+        self.apply_step(kind, idx, extra)
+
+    def fail(self, msg):
+        self.state = "fail"
+        self.message = (msg + "  Edit and press RUN to try again.", RED)
+
+    def win(self):
+        self.state = "success"
+        count = len(self.program)
+        par = self.level["par"]
+        stars = 3 if count <= par else 2 if count <= par + 2 else 1
+        self.last_stars = stars
+        self.stars[self.level_idx] = max(stars, self.stars.get(self.level_idx, 0))
+        self.unlocked = max(self.unlocked, min(self.level_idx + 2, len(LEVELS)))
+        self.message = ("Level complete!", GREEN)
+        self.active_idx = None
+        for _ in range(140):
+            self.confetti.append(dict(
+                x=GRID_RECT.centerx + random.uniform(-120, 120), y=GRID_RECT.y + 60,
+                vx=random.uniform(-220, 220), vy=random.uniform(-380, -80),
+                c=random.choice([ACCENT, GREEN, YELLOW, C_LOGIC, C_LOOP, RED]),
+                life=random.uniform(1.2, 2.4)))
+        last = self.level_idx == len(LEVELS) - 1
+        self.overlay_btns = [
+            Button((GRID_RECT.centerx - 150, GRID_RECT.centery + 62, 130, 42), "Replay", C_GREY, "replay", self.f_btn),
+            Button((GRID_RECT.centerx - 10, GRID_RECT.centery + 62, 160, 42),
+                   "Finish" if last else "Next Level", GREEN, "next", self.f_btn),
+        ]
+
+    def burst(self, pos, color, n):
+        for _ in range(n):
+            self.confetti.append(dict(x=pos[0], y=pos[1],
+                                      vx=random.uniform(-90, 90), vy=random.uniform(-140, -20),
+                                      c=color, life=random.uniform(0.4, 0.9)))
+
+    def cell_center(self, p):
+        return (self.origin[0] + (p[0] + 0.5) * self.cell,
+                self.origin[1] + (p[1] + 0.5) * self.cell)
+
+    def next_level(self):
+        if self.level_idx + 1 < len(LEVELS):
+            self.load_level(self.level_idx + 1)
+        else:
+            self.mode = "end"
+
+    # ------------------------------------------------------------- events
+    def do(self, tag):
+        if tag == "run":
+            self.start_run()
+        elif tag == "reset":
+            self.reset_robot()
+        elif tag == "clear" and self.state != "running":
+            self.program.clear()
+            self.sel = -1
+            self.after_edit()
+        elif tag == "speed":
+            self.speed_i = (self.speed_i + 1) % len(self.speed_opts)
+            self.controls[3].text = "Speed %dx" % self.speed
+
+    def dot_center(self, i):
+        n = len(LEVELS)
+        return (1054 - (n - 1 - i) * 46, 44)
+
+    def click(self, pos):
+        if self.mode == "title":
+            if self.start_btn.hit(pos):
+                self.mode = "play"
+            return
+        if self.mode == "end":
+            if self.again_btn.hit(pos):
+                self.stars.clear()
+                self.programs.clear()
+                self.unlocked = 1
+                self.mode = "play"
+                self.load_level(0)
+            return
+        if self.state == "success":
+            for b in self.overlay_btns:
+                if b.hit(pos):
+                    if b.tag == "next":
+                        self.next_level()
+                    else:
+                        self.reset_robot()
+            return
+        for i in range(len(LEVELS)):
+            cx, cy = self.dot_center(i)
+            if math.hypot(pos[0] - cx, pos[1] - cy) <= 17 and i < self.unlocked:
+                self.load_level(i)
+                return
+        for b in self.controls:
+            if b.hit(pos):
+                self.do(b.tag)
+                return
+        if self.state == "running":
+            return
+        for b in self.palette:
+            if b.hit(pos):
+                self.add_token(b.tag)
+                return
+        step = 5 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1
+        depths, _ = self.compute_rows()
+        for i, t in enumerate(self.program):
+            row, minus, plus, dele = self.row_rects(i, depths[i])
+            if dele.collidepoint(pos):
+                self.delete_token(i)
+                return
+            if t["kind"] == "REPEAT" and plus.collidepoint(pos):
+                t["n"] = min(30, t["n"] + step)
+                self.sel = i
+                self.after_edit()
+                return
+            if t["kind"] == "REPEAT" and minus.collidepoint(pos):
+                t["n"] = max(1, t["n"] - step)
+                self.sel = i
+                self.after_edit()
+                return
+            if row.collidepoint(pos):
+                self.sel = -1 if self.sel == i else i
+                return
+
+    def key(self, e):
+        if e.key == pygame.K_ESCAPE:
+            pygame.quit()
+            sys.exit()
+        if self.mode == "title":
+            if e.key in (pygame.K_RETURN, pygame.K_SPACE):
+                self.mode = "play"
+            return
+        if self.mode == "end":
+            if e.key == pygame.K_RETURN:
+                self.click(self.again_btn.rect.center)
+            return
+        if e.key in (pygame.K_RETURN, pygame.K_SPACE):
+            if self.state == "success":
+                self.next_level()
+            else:
+                self.start_run()
+        elif e.key == pygame.K_r:
+            self.reset_robot()
+        elif e.key in (pygame.K_BACKSPACE, pygame.K_DELETE):
+            self.delete_token(self.sel)
+        elif e.key == pygame.K_UP and self.program:
+            self.sel = max(0, (self.sel if self.sel >= 0 else len(self.program)) - 1)
+        elif e.key == pygame.K_DOWN and self.program:
+            self.sel = min(len(self.program) - 1, self.sel + 1)
+        elif pygame.K_1 <= e.key <= pygame.K_9:
+            n = e.key - pygame.K_1
+            if n < len(self.palette):
+                self.add_token(self.palette[n].tag)
+
+    # ------------------------------------------------------------- update
+    def update(self, dt):
+        if self.mode == "play" and self.state == "running":
+            self.timer += dt
+            if self.timer >= self.dur:
+                self.finish_step()
+        for c in self.confetti:
+            c["life"] -= dt
+            c["vy"] += 700 * dt
+            c["x"] += c["vx"] * dt
+            c["y"] += c["vy"] * dt
+        self.confetti = [c for c in self.confetti if c["life"] > 0]
+
+    # --------------------------------------------------------------- draw
+    def draw(self):
+        mouse = pygame.mouse.get_pos()
+        self.screen.fill(BG)
+        if self.mode == "title":
+            self.draw_title(mouse)
+        elif self.mode == "end":
+            self.draw_end(mouse)
+        else:
+            self.draw_topbar()
+            self.draw_grid()
+            self.draw_message()
+            self.draw_lesson()
+            self.draw_right(mouse)
+            if self.state == "success":
+                self.draw_overlay(mouse)
+        for c in self.confetti:
+            pygame.draw.rect(self.screen, c["c"], (c["x"], c["y"], 7, 7))
+
+    def draw_title(self, mouse):
+        s = self.screen
+        draw_text(s, "CODE QUEST", self.f_big, ACCENT, (WIDTH // 2, 120), "center")
+        draw_text(s, "Teach the robot to think like a programmer!", self.f_h, TEXT,
+                  (WIDTH // 2, 190), "center")
+        bob = math.sin(pygame.time.get_ticks() / 400) * 8
+        s.blit(self.title_robot, self.title_robot.get_rect(center=(WIDTH // 2, 320 + bob)))
+        chips = [("SEQUENCES", C_MOVE), ("LOOPS", C_LOOP), ("CONDITIONALS", C_LOGIC), ("DEBUGGING", RED)]
+        x = 190
+        for name, col in chips:
+            r = pygame.Rect(x, 440, 190, 42)
+            pygame.draw.rect(s, col, r, border_radius=21)
+            draw_text(s, name, self.f_btn, WHITE, r.center, "center")
+            x += 205
+        draw_text(s, "Build programs from code blocks and watch the robot run them.",
+                  self.f_body, MUTED, (WIDTH // 2, 505), "center")
+        self.start_btn.draw(s, mouse)
+        draw_text(s, "Press Enter to start", self.f_small, MUTED, (WIDTH // 2, 620), "center")
+
+    def draw_end(self, mouse):
+        s = self.screen
+        total = sum(self.stars.values())
+        draw_text(s, "You did it!", self.f_big, GREEN, (WIDTH // 2, 100), "center")
+        draw_text(s, "Total stars: %d / %d" % (total, 3 * len(LEVELS)), self.f_h, YELLOW,
+                  (WIDTH // 2, 170), "center")
+        lines = [
+            ("Sequences", C_MOVE, "Computers follow instructions in order, one step at a time."),
+            ("Loops", C_LOOP, "Repeat a pattern instead of writing it again and again."),
+            ("Conditionals", C_LOGIC, "if / else lets a program make decisions on its own."),
+            ("Debugging", RED, "Bugs are normal - find them, fix them, run again."),
+        ]
+        y = 230
+        for name, col, desc in lines:
+            r = pygame.Rect(150, y, 800, 66)
+            pygame.draw.rect(s, PANEL, r, border_radius=14)
+            pygame.draw.rect(s, col, (r.x, r.y, 10, r.h), border_top_left_radius=14,
+                             border_bottom_left_radius=14)
+            draw_text(s, name, self.f_h, col, (r.x + 30, r.y + 10))
+            draw_text(s, desc, self.f_body, TEXT, (r.x + 30, r.y + 38))
+            y += 78
+        draw_text(s, "Ready for real code? Try Python, Scratch, or JavaScript next!",
+                  self.f_body, MUTED, (WIDTH // 2, 540), "center")
+        self.again_btn.draw(s, mouse)
+
+    def draw_topbar(self):
+        s = self.screen
+        draw_text(s, "CODE QUEST", self.f_title, ACCENT, (30, 10))
+        draw_text(s, self.level["title"], self.f_h, TEXT, (30, 54))
+        for i in range(len(LEVELS)):
+            cx, cy = self.dot_center(i)
+            if i < self.unlocked:
+                fill = GREEN if i in self.stars else PANEL_LIGHT
+                txt = WHITE
+            else:
+                fill, txt = PANEL, (80, 90, 120)
+            pygame.draw.circle(s, fill, (cx, cy), 16)
+            if i == self.level_idx:
+                pygame.draw.circle(s, ACCENT, (cx, cy), 19, 3)
+            draw_text(s, str(i + 1), self.f_btn, txt, (cx, cy), "center")
+
+    def draw_grid(self):
+        s = self.screen
+        pygame.draw.rect(s, PANEL, GRID_RECT, border_radius=16)
+        cs = self.cell
+        ox, oy = self.origin
+        t = pygame.time.get_ticks()
+        for y in range(self.gh):
+            for x in range(self.gw):
+                r = pygame.Rect(ox + x * cs, oy + y * cs, cs, cs).inflate(-3, -3)
+                if (x, y) in self.walls:
+                    pygame.draw.rect(s, WALL_C, r, border_radius=8)
+                    pygame.draw.rect(s, WALL_EDGE, r, 2, border_radius=8)
+                else:
+                    pygame.draw.rect(s, FLOOR_C, r, border_radius=8)
+        # flag
+        gx, gy = self.goal
+        px, py = ox + gx * cs, oy + gy * cs
+        pygame.draw.circle(s, (40, 96, 78), (px + cs // 2, py + cs // 2), int(cs * 0.38))
+        pole = px + cs * 0.40
+        pygame.draw.line(s, WHITE, (pole, py + cs * 0.2), (pole, py + cs * 0.8), 3)
+        pygame.draw.polygon(s, GREEN, [(pole + 1, py + cs * 0.2), (pole + cs * 0.34, py + cs * 0.33),
+                                       (pole + 1, py + cs * 0.46)])
+        # coins
+        for (x, y) in self.coins:
+            cx, cy = self.cell_center((x, y))
+            cy += math.sin(t / 250 + x + y) * 2
+            pygame.draw.circle(s, shade(YELLOW, -60), (cx, cy), cs * 0.2 + 2)
+            pygame.draw.circle(s, YELLOW, (cx, cy), cs * 0.2)
+            pygame.draw.circle(s, shade(YELLOW, 40), (cx - cs * 0.05, cy - cs * 0.05), cs * 0.07)
+        # robot
+        if self.state == "running":
+            p = smooth(min(1.0, self.timer / max(self.dur, 1e-6)))
+        else:
+            p = 1.0
+        fx = lerp(self.vis_from[0], self.vis_to[0], p)
+        fy = lerp(self.vis_from[1], self.vis_to[1], p)
+        ang = lerp(self.ang_from, self.ang_to, p)
+        off = 0.0
+        if self.bump and self.state == "running":
+            off = math.sin(math.pi * min(1.0, self.timer / max(self.dur, 1e-6))) * 0.28 * cs
+        dx, dy = DIRS[self.dir]
+        cx = ox + (fx + 0.5) * cs + dx * off
+        cy = oy + (fy + 0.5) * cs + dy * off
+        rot = pygame.transform.rotate(self.robot_surf, -ang)
+        s.blit(rot, rot.get_rect(center=(cx, cy)))
+        if self.state == "fail":
+            pygame.draw.circle(s, RED, (cx + cs * 0.3, cy - cs * 0.34), 11)
+            draw_text(s, "!", self.f_btn, WHITE, (cx + cs * 0.3, cy - cs * 0.34), "center")
+        if self.level["concept"] != "SEQUENCES" or self.coins_initial:
+            if self.coins_initial:
+                got = len(self.coins_initial) - len(self.coins)
+                draw_text(s, "Coins: %d / %d" % (got, len(self.coins_initial)), self.f_btn, YELLOW,
+                          (GRID_RECT.x + 16, GRID_RECT.y + 12))
+
+    def draw_message(self):
+        text, col = self.message
+        if text:
+            pygame.draw.rect(self.screen, PANEL, MSG_RECT, border_radius=10)
+            draw_text(self.screen, text, self.f_body, col, (MSG_RECT.x + 14, MSG_RECT.centery), "midleft")
+
+    def draw_lesson(self):
+        s = self.screen
+        L = self.level
+        pygame.draw.rect(s, PANEL, LESSON_RECT, border_radius=14)
+        w = self.f_small.size(L["concept"])[0] + 22
+        pill = pygame.Rect(LESSON_RECT.x + 16, LESSON_RECT.y + 10, w, 22)
+        pygame.draw.rect(s, L["color"], pill, border_radius=11)
+        draw_text(s, L["concept"], self.f_small, WHITE, pill.center, "center")
+        y = LESSON_RECT.y + 40
+        for line in wrap(L["lesson"], self.f_body, LESSON_RECT.w - 32):
+            draw_text(s, line, self.f_body, TEXT, (LESSON_RECT.x + 16, y))
+            y += 20
+        draw_text(s, L["hint"], self.f_small, YELLOW, (LESSON_RECT.x + 16, LESSON_RECT.bottom - 22))
+
+    def draw_right(self, mouse):
+        s = self.screen
+        running = self.state == "running"
+        full = len(self.program) >= self.level["max_blocks"]
+        pygame.draw.rect(s, PANEL, PAL_RECT, border_radius=14)
+        draw_text(s, "CODE BLOCKS", self.f_h, TEXT, (PAL_X + 14, 96))
+        draw_text(s, "click or press 1-%d" % len(self.palette), self.f_small, MUTED,
+                  (PAL_RECT.right - 14, 102), "topright")
+        for b in self.palette:
+            b.draw(s, mouse, enabled=not running and not full)
+
+        pygame.draw.rect(s, PANEL, PROG_PANEL, border_radius=14)
+        draw_text(s, "YOUR PROGRAM", self.f_h, TEXT, (PAL_X + 14, 316))
+        counter_col = YELLOW if full else MUTED
+        draw_text(s, "Blocks: %d / %d" % (len(self.program), self.level["max_blocks"]),
+                  self.f_body, counter_col, (PROG_PANEL.right - 14, 319), "topright")
+        if not self.program:
+            draw_text(s, "Click a block above to add it here.", self.f_body, MUTED,
+                      PROG_RECT.center, "center")
+        depths, colors = self.compute_rows()
+        for i, t in enumerate(self.program):
+            row, minus, plus, dele = self.row_rects(i, depths[i])
+            col = colors[i]
+            active = (i == self.active_idx)
+            pygame.draw.rect(s, shade(col, 50) if active else col, row, border_radius=7)
+            if active:
+                pygame.draw.rect(s, YELLOW, row, 3, border_radius=7)
+            elif i == self.sel:
+                pygame.draw.rect(s, WHITE, row, 2, border_radius=7)
+            label = BLOCKS[t["kind"]][0]
+            if t["kind"] == "REPEAT":
+                label = "repeat %d times:" % t["n"]
+            draw_text(s, label, self.f_mono, WHITE, (row.x + 10, row.centery), "midleft")
+            if not running:
+                if t["kind"] == "REPEAT":
+                    for r, ch in ((minus, "-"), (plus, "+")):
+                        pygame.draw.rect(s, shade(col, -45), r, border_radius=5)
+                        draw_text(s, ch, self.f_btn, WHITE, r.center, "center")
+                pygame.draw.rect(s, shade(col, -45), dele, border_radius=5)
+                draw_text(s, "x", self.f_small, WHITE, dele.center, "center")
+        for b in self.controls:
+            b.draw(s, mouse, enabled=(b.tag != "run" or not running))
+        draw_text(s, "Enter: run   R: reset   Backspace: delete   Shift+click: +/- 5",
+                  self.f_small, MUTED, (PAL_X, 664))
+
+    def draw_overlay(self, mouse):
+        s = self.screen
+        r = pygame.Rect(0, 0, 400, 250)
+        r.center = GRID_RECT.center
+        shadow = pygame.Surface(GRID_RECT.size, pygame.SRCALPHA)
+        shadow.fill((0, 0, 0, 120))
+        s.blit(shadow, GRID_RECT)
+        pygame.draw.rect(s, PANEL_LIGHT, r, border_radius=18)
+        pygame.draw.rect(s, GREEN, r, 3, border_radius=18)
+        draw_text(s, "Level Complete!", self.f_title, GREEN, (r.centerx, r.y + 40), "center")
+        for i in range(3):
+            col = YELLOW if i < self.last_stars else (70, 78, 108)
+            pygame.draw.polygon(s, col, star_points(r.centerx - 56 + i * 56, r.y + 100, 24, 10))
+        draw_text(s, "Blocks used: %d   (par: %d)" % (len(self.program), self.level["par"]),
+                  self.f_body, TEXT, (r.centerx, r.y + 150), "center")
+        for b in self.overlay_btns:
+            b.draw(s, mouse)
+
+    # ---------------------------------------------------------------- loop
+    def run(self):
+        while True:
+            dt = self.clock.tick(FPS) / 1000.0
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                elif e.type == pygame.KEYDOWN:
+                    self.key(e)
+                elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                    self.click(e.pos)
+            self.update(dt)
+            self.draw()
+            pygame.display.flip()
+
+
+if __name__ == "__main__":
+    Game().run()
